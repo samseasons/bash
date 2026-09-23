@@ -36,10 +36,8 @@ substitute() {
         b=${b%%$past*}
         a=$((a + ${#b}))
         if [[ ${#text} -lt $((a + i + 1)) ]]; then
-            echo "$text"
-            return
-        fi
-        if [[ $base64 = *${text:a+i:1}* || ($a -ne 0 && $base64"\"'." = *${text:a-1:1}*) ]]; then
+            break
+        elif [[ $base64 = *${text:a+i:1}* || ($a -ne 0 && $base64"\"'." = *${text:a-1:1}*) ]]; then
             a=$((a + i))
             continue
         fi
@@ -51,20 +49,13 @@ substitute() {
 
 parse() {
     file=$1
-    modules=$2
-    texts=$3
     if [[ -e "$file" ]]; then
         text=$(<"$file")
     else
-        texts[$file]=''
+        textsa+=("$file")
+        textsb+=('')
         return
     fi
-    while [[ $text = *$' \n'* ]]; do
-        text=${text//$' \n'/$'\n'}
-    done
-    while [[ $text = *$'\n\n'* ]]; do
-        text=${text//$'\n\n'/$'\n'}
-    done
     IFS=$'\n' read -d '' -r -a lines <<< "$text"
     remove=false
     text=''
@@ -97,7 +88,8 @@ parse() {
             text+=$line$'\n'
         fi
     done
-    declare -A files=([$file]='')
+    filesa=("$file")
+    filesb=('')
     order=()
     texta=$text
     i=${text%%'import '*}
@@ -146,24 +138,67 @@ parse() {
         if [[ $f = '"' || $f = "'" ]]; then
             text=${text:i+1}
             f=$(resolve "${text%%$f*}" "$file")
-            if [[ ! "${order[@]}" =~ "$f" ]]; then
-                files[$f]=''
+            found=false
+            for i in "${order[@]}"; do
+                if [[ "$i" = "$f" ]]; then
+                    found=true
+                    break
+                fi
+            done
+            if [[ $found = false ]]; then
+                j=${#filesa[@]}
+                filesa+=("$f")
+                filesb+=('')
                 order+=("$f")
+            else
+                for i in "${!filesa[@]}"; do
+                    if [[ "${filesa[$i]}" = "$f" ]]; then
+                        j=$i
+                        break
+                    fi
+                done
             fi
             for name in "${names[@]}"; do
-                files[$f]+=$name$'\n'
+                filesb[$j]+=$name$'\n'
             done
         fi
         i=${text%%'import '*}
         i=${#i}
     done
     mods=''
-    modules[$file]=''
+    j=-1
+    for i in "${!modulesa[@]}"; do
+        if [[ "${modulesa[$i]}" = "$file" ]]; then
+            j=$i
+            modulesb[$j]=''
+            break
+        fi
+    done
+    if [[ $j = -1 ]]; then
+        j=${#modulesa[@]}
+        modulesa+=("$file")
+        modulesb+=("$mods")
+    fi
     for f in "${order[@]}"; do
-        if [[ ! "${!texts[@]}" =~ "$f" ]]; then
+        found=false
+        for i in "${textsa[@]}"; do
+            if [[ "$i" = "$f" ]]; then
+                found=true
+                break
+            fi
+        done
+        if [[ $found = false ]]; then
             mods+=$f$'\n'
-            if [[ ! "${!modules[@]}" =~ "$f" ]]; then
-                modules[$file]=$mods
+            found=false
+            for i in "${modulesa[@]}"; do
+                if [[ "$i" = "$f" ]]; then
+                    found=true
+                    break
+                fi
+            done
+            if [[ $found = false ]]; then
+                modulesa[$j]="$file"
+                modulesb[$j]="$mods"
                 return
             fi
         fi
@@ -188,7 +223,7 @@ parse() {
             names=$i
         fi
         i=0
-        while [[ ${names:i:1} = ' ' ]] do
+        while [[ ${names:i:1} = ' ' ]]; do
             i=$((i + 1))
         done
         split=()
@@ -217,26 +252,34 @@ parse() {
                 done
             fi
         fi
+        i=-1
+        for j in "${!filesa[@]}"; do
+            if [[ "${filesa[$j]}" = "$file" ]]; then
+                i=$j
+                break
+            fi
+        done
         for name in "${split[@]}"; do
             while [[ "${defines[@]}" =~ ${name::1} ]]; do
                 name=${name:1}
             done
-            for i in "${defines[@]}"; do
-                j=${name%%$i*}
-                if [[ ${#j} -ne ${#name} ]]; then
-                    name=$j
+            for j in "${defines[@]}"; do
+                k=${name%%$j*}
+                if [[ ${#k} -ne ${#name} ]]; then
+                    name=$k
                 fi
             done
-            files[$file]+=$name$'\n'
+            filesb[$i]+=$name$'\n'
         done
         i=${text%%'export '*}
         i=${#i}
     done
     text=$texta
-    for f in "${!files[@]}"; do
-        path=${f::-3}
+    for i in "${!filesa[@]}"; do
+        f="${filesa[$i]}"
+        path=${f::${#f}-3}
         path=$(echo -n $path | tr -c $base64 '_')
-        IFS=$'\n' read -d '' -r -a names <<< "${files[$f]}"
+        IFS=$'\n' read -d '' -r -a names <<< "${filesb[$i]}"
         for name in "${names[@]}"; do
             text=$(substitute "$text" $name $name'_'$path)
         done
@@ -258,7 +301,8 @@ parse() {
             text+=$line$'\n'
         fi
     done
-    texts[$file]=$text
+    textsa+=("$file")
+    textsb+=("$text")
 }
 
 build() {
@@ -266,24 +310,46 @@ build() {
     output=${2:-a/y.js}
     imported=()
     imports=("$file")
-    declare -A modules=()
-    declare -A texts=()
+    modulesa=()
+    modulesb=()
+    textsa=()
+    textsb=()
     while [[ ${#imports[@]} -ne 0 ]]; do
         file=${imports[0]}
-        if [[ "${imported[@]}" =~ "$file" ]]; then
-            imports=("${imports[@]:1}")
-        else
-            parse "$file" "${modules[@]}" "${texts[@]}"
-            IFS=$'\n' read -d '' -r -a mods <<< "${modules[$file]}"
-            imports=("${mods[@]}" "${imports[@]}")
-            if [[ "${!texts[@]}" =~ "$file" ]]; then
-                imported+=("$file")
+        found=false
+        for i in "${imported[@]}"; do
+            if [[ "$i" = "$file" ]]; then
+                found=true
+                imports=("${imports[@]:1}")
+                break
             fi
+        done
+        if [[ $found = false ]]; then
+            parse "$file"
+            for i in "${!modulesa[@]}"; do
+                if [[ "${modulesa[$i]}" = "$file" ]]; then
+                    IFS=$'\n' read -d '' -r -a mods <<< "${modulesb[$i]}"
+                    break
+                fi
+            done
+            imports=("${mods[@]}" "${imports[@]}")
+            found=false
+            for i in "${textsa[@]}"; do
+                if [[ "$i" = "$file" ]]; then
+                    imported+=("$file")
+                    break
+                fi
+            done
         fi
     done
     text=''
     for file in "${imported[@]}"; do
-        text+=${texts[$file]}
+        for i in "${!textsa[@]}"; do
+            if [[ "${textsa[$i]}" = "$file" ]]; then
+                text+="${textsb[$i]}"
+                break
+            fi
+        done
     done
     echo -n "$text" > "$output"
 }

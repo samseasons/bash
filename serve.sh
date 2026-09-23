@@ -1,32 +1,35 @@
 # bash serve.sh a 1234
 
-declare -A types=(
-    ['css']='text/css'
-    ['html']='text/html'
-    ['ico']='image/x-icon'
-    ['js']='application/javascript'
-)
+extensions=('css' 'html' 'ico' 'js')
+types=('text/css' 'text/html' 'image/x-icon' 'application/javascript')
 
 prepare() {
     folder=$1
     line=($2)
     file="${line[1]//'%20'/' '}"
-    if [[ $file != '/'* || $file = '/' ]]; then
+    if [[ "$file" != '/'* || $file = '/' ]]; then
         file='/x.html'
         type='text/html'
     else
-        type=${types[${file##*.}]}
+        extension=${file##*.}
+        for ((i=0, length=${#extensions[@]}; i < length; i++)); do
+            if [[ "$extension" = "${extensions[$i]}" ]]; then
+                type=${types[$i]}
+            fi
+        done
     fi
-    file="$folder$file"
-    if [[ -e "$file" ]]; then
-        echo $'HTTP/1.\ncontent-type:'$type$'\n\n'"$(tr -d '\0' < "$file")"
-    fi
+    echo "$folder$file"
+    echo "$type"
 }
 
 preparea() {
     folder=$1
     read line
-    echo "$(prepare "$folder" "$line")"
+    readarray -t f < <(prepare "$folder" "$line")
+    if [[ -e "${f[0]}" ]]; then
+        echo -n $'HTTP/1.\ncontent-type:'"${f[1]}"$'\n\n'
+        cat "${f[0]}"
+    fi
 }
 
 prepareb() {
@@ -34,7 +37,14 @@ prepareb() {
     port=$2
     while read line; do
         if [[ $line = 'GET /'* ]]; then
-            : $(echo "$(prepare "$folder" "$line")" | netcat -l -w 0 $port)
+            readarray -t f < <(prepare "$folder" "$line")
+            if [[ -e "${f[0]}" ]]; then
+                if [[ "${f[1]}" = 'text/html' ]]; then
+                    : $(echo $'HTTP/1.\ncontent-type:'"${f[1]}"$'\n\n'"$(<"${f[0]}")" | netcat -l -w 0 $port)
+                else
+                    : $(echo $'HTTP/1.\ncontent-type:'"${f[1]}"$'\n\n' | netcat -l -w 0 $port < "${f[0]}")
+                fi
+            fi
         fi
     done
 }
