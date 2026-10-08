@@ -25,22 +25,23 @@ resolve() {
 }
 
 substitute() {
-    next=$1
-    past=$2
+    match=$1
+    next=$2
     text=$3
-    a=0
-    i=${#past}
+    a=${text%%$match*}
+    a=${#a}
+    i=${#match}
     j=${#next}
-    while [[ ${text:a} = *$past* ]]; do
-        b=${text:a}
-        b=${b%%$past*}
-        a=$((a + ${#b}))
+    while [[ $a -ne ${#text} ]]; do
         if [[ $base64 = *${text:a+i:1}* || ($a -ne 0 && $base64"\"'." = *${text:a-1:1}*) ]]; then
             a=$((a + i))
-            continue
+        else
+            text=${text::a}$next${text:a+i}
+            a=$((a + j))
         fi
-        text=${text::a}$next${text:a+i}
-        a=$((a + j))
+        b=${text:a}
+        b=${b%%$match*}
+        a=$((a + ${#b}))
     done
     echo "$text"
 }
@@ -86,8 +87,10 @@ parse() {
             text+=$line$'\n'
         fi
     done
-    filesa=("$file")
-    filesb=('')
+    defaultsa=()
+    defaultsb=()
+    exportsa=("$file")
+    exportsb=('')
     order=()
     texta=$text
     i=${text%%'import '*}
@@ -106,14 +109,17 @@ parse() {
         while [[ ${text:i:1} = ' ' ]]; do
             i=$((i + 1))
         done
+        defaulted=''
+        namesa=()
+        namesb=()
         text=${text:i}
         i=${text%%'from'*}
         i=${#i}
         j=${text%%'"'*}
         k=${text%%"'"*}
-        names=()
         if [[ $i -lt ${#j} && $i -lt ${#k} ]]; then
-            while [[ $i -lt ${#text} ]]; do
+            length=${#text}
+            while [[ $i -lt $length ]]; do
                 j=${text:i-1:1}
                 k=${text:i+4:1}
                 if [[ ($j = ' ' || $j = '}') && ($k = ' ' || $k = '"' || $k = "'") ]]; then
@@ -124,7 +130,36 @@ parse() {
                 j=${j%%'from'*}
                 i=$((i + ${#j}))
             done
-            IFS=' ,{}' read -r -a names <<< "${text::i}"
+            variables=${text::i}
+            j=${text%%'{'*}
+            j=${#j}
+            if [[ $j -ne ${#text} ]]; then
+                k=${text%%'}'*}
+                k=${#k}
+                IFS=',' read -r -a split <<< "${variables:j+1:k-j-1}"
+                variables=${variables::j}
+                for name in "${split[@]}"; do
+                    name=${name#"${name%%[![:blank:]]*}"}
+                    name=${name%"${name##*[![:blank:]]}"}
+                    j=${name%%' as '*}
+                    j=${#j}
+                    if [[ $j -ne ${#name} ]]; then
+                        namesa+=(${name::j})
+                        namesb+=(${name:j+4})
+                    elif [[ $name ]]; then
+                        namesa+=($name)
+                        namesb+=($name)
+                    fi
+                done
+            fi
+            name=${variables%%','*}
+            name=${name#"${name%%[![:blank:]]*}"}
+            name=${name%"${name##*[![:blank:]]}"}
+            if [[ $name ]]; then
+                defaulted=$name
+                namesa+=($name)
+                namesb+=($name)
+            fi
             i=$((i + 5))
             while [[ ${text:i:1} = ' ' ]]; do
                 i=$((i + 1))
@@ -144,25 +179,30 @@ parse() {
                 fi
             done
             if [[ $found -eq 0 ]]; then
-                j=${#filesa[@]}
-                filesa+=("$f")
-                filesb+=('')
+                j=${#exportsa[@]}
+                exportsa+=("$f")
+                exportsb+=('')
                 order+=("$f")
             else
-                for i in "${!filesa[@]}"; do
-                    if [[ "${filesa[$i]}" = "$f" ]]; then
+                for i in "${!exportsa[@]}"; do
+                    if [[ "${exportsa[$i]}" = "$f" ]]; then
                         j=$i
                         break
                     fi
                 done
             fi
-            for name in "${names[@]}"; do
-                filesb[$j]+=$name$'\n'
+            if [[ $defaulted ]]; then
+                defaultsa+=("$f")
+                defaultsb+=($defaulted)
+            fi
+            for i in "${!namesa[@]}"; do
+                exportsb[$j]+=${namesa[$i]}' '${namesb[$i]}$'\n'
             done
         fi
         i=${text%%'import '*}
         i=${#i}
     done
+    dependencies=0
     mods=''
     for f in "${order[@]}"; do
         found=0
@@ -189,15 +229,18 @@ parse() {
                         break
                     fi
                 done
-                if [[ $j = -1 ]]; then
+                if [[ $j -eq -1 ]]; then
                     j=${#modulesa[@]}
                 fi
-                modulesa[$j]="$file"
-                modulesb[$j]="$mods"
-                return
+                dependencies=1
             fi
         fi
     done
+    if [[ $dependencies = 1 ]]; then
+        modulesa[$j]="$file"
+        modulesb[$j]="$mods"
+        return
+    fi
     declares=('async' 'class' 'const' 'default' 'function' 'let' 'var')
     defines=($'\n' ' ' '(' ',' '.' '[')
     text=$texta
@@ -205,6 +248,12 @@ parse() {
     i=${#i}
     while [[ $i -ne ${#text} ]]; do
         text=${text:i+7}
+        i=${text%%'default '*}
+        if [[ ${#i} -eq 0 ]]; then
+            i=${text%%'export '*}
+            i=${#i}
+            continue
+        fi
         for name in "${declares[@]}"; do
             i=${text%%$name*}
             i=${#i}
@@ -212,71 +261,90 @@ parse() {
                 text=${text:i+${#name}}
             fi
         done
-        names=''
         i=${text%%$'\n'*}
         if [[ ${#i} -ne ${#text} ]]; then
-            names=$i
-        fi
-        i=0
-        while [[ ${names:i:1} = ' ' ]]; do
-            i=$((i + 1))
-        done
-        split=()
-        if [[ ${names:i:1} = '{' ]]; then
-            names=${names:i+1}
-            IFS=',' read -r -a split <<< "${names%%'}'*}"
-        else
-            i=${names%%'('*}
-            i=${#i}
-            j=${names%%'='*}
-            k=${#j}
-            if [[ $k -eq ${#names} || ($i -lt $k && $i -ne ${#names}) ]]; then
-                split+=("$names")
-            else
-                while [[ $k -ne ${#names} && ${names:k+1:1} != '>' ]]; do
-                    split+=("$j")
-                    names=${names:k}
-                    j=${names%%','*}
-                    j=${#j}
-                    if [[ $j -eq ${#names} ]]; then
-                        break
-                    fi
-                    names=${names:j}
-                    j=${names%%'='*}
-                    k=${#j}
-                done
-            fi
-        fi
-        i=-1
-        for j in "${!filesa[@]}"; do
-            if [[ "${filesa[$j]}" = "$file" ]]; then
-                i=$j
-                break
-            fi
-        done
-        for name in "${split[@]}"; do
-            while [[ "${defines[@]}" =~ ${name::1} ]]; do
-                name=${name:1}
+            variables=$i
+            i=0
+            length=${#name}
+            while [[ $i -lt $length && ${variables:i:1} = ' ' ]]; do
+                i=$((i + 1))
             done
-            for j in "${defines[@]}"; do
-                k=${name%%$j*}
-                if [[ ${#k} -ne ${#name} ]]; then
-                    name=$k
+            split=()
+            if [[ $i -lt $length && ${variables:i:1} = '{' ]]; then
+                variables=${variables:i+1}
+                IFS=',' read -r -a split <<< "${variables%%'}'*}"
+            else
+                i=${variables%%'('*}
+                i=${#i}
+                j=${variables%%'='*}
+                k=${#j}
+                if [[ $k -eq ${#variables} || ($i -lt $k && $i -ne ${#variables}) ]]; then
+                    split+=("$variables")
+                else
+                    while [[ $k -ne ${#variables} && ${variables:k+1:1} != '>' ]]; do
+                        split+=("$j")
+                        variables=${variables:k}
+                        j=${variables%%','*}
+                        j=${#j}
+                        if [[ $j -eq ${#variables} ]]; then
+                            break
+                        fi
+                        variables=${variables:j}
+                        j=${variables%%'='*}
+                        k=${#j}
+                    done
+                fi
+            fi
+            i=-1
+            for j in "${!exportsa[@]}"; do
+                if [[ "${exportsa[$j]}" = "$file" ]]; then
+                    i=$j
+                    break
                 fi
             done
-            filesb[$i]+=$name$'\n'
-        done
+            for name in "${split[@]}"; do
+                while [[ "${defines[@]}" =~ ${name::1} ]]; do
+                    name=${name:1}
+                done
+                for j in "${defines[@]}"; do
+                    k=${name%%$j*}
+                    if [[ ${#k} -ne ${#name} ]]; then
+                        name=$k
+                    fi
+                done
+                exportsb[$i]+=$name' '$name$'\n'
+            done
+        fi
         i=${text%%'export '*}
         i=${#i}
     done
+    defaulted=''
     text=$texta
-    for i in "${!filesa[@]}"; do
-        f="${filesa[$i]}"
+    for i in "${!exportsa[@]}"; do
+        f="${exportsa[$i]}"
         path=${f::${#f}-3}
         path=$(echo -n $path | tr -c $base64 '_')
-        IFS=$'\n' read -d '' -r -a names <<< "${filesb[$i]}"
+        if [[ "$f" = "$file" ]]; then
+            defaulted=$path
+        fi
+        IFS=$'\n' read -d '' -r -a names <<< "${exportsb[$i]}"
         for name in "${names[@]}"; do
-            text=$(substitute $name'_'$path $name "$text")
+            i=${name%%' '*}
+            i=${#i}
+            named=${name::i}
+            name=${name:i+1}
+            found=0
+            for i in "${!defaultsa[@]}"; do
+                if [[ "${defaultsa[$i]}" = "$f" && ${defaultsb[$i]} = $name ]]; then
+                    found=1
+                    break
+                fi
+            done
+            if [[ $found -eq 1 ]]; then
+                text=$(substitute $name '_'$path "$text")
+            else
+                text=$(substitute $name $named'_'$path "$text")
+            fi
         done
     done
     IFS=$'\n' read -d '' -r -a lines <<< "$text"
@@ -284,7 +352,7 @@ parse() {
     for line in "${lines[@]}"; do
         a=${line#"${line%%[![:blank:]]*}"}
         if [[ $a = 'export default '* ]]; then
-            line=${a:15}
+            line='_'$defaulted' = '${a:15}
         elif [[ $a = 'export '* ]]; then
             line=${a:7}
             a=${line#"${line%%[![:blank:]]*}"}
@@ -331,6 +399,7 @@ build() {
             for i in "${textsa[@]}"; do
                 if [[ "$i" = "$file" ]]; then
                     imported+=("$file")
+                    imports=("${imports[@]:1}")
                     break
                 fi
             done
