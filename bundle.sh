@@ -5,19 +5,23 @@ base64='$0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz'
 resolve() {
     f=$1
     file=$2
-    if [[ $f = './'* ]]; then
-        f=${f:2}
-    fi
-    i=${f::1}
-    if [[ $i != '.' && $i != '/' ]]; then
-        f=${file%'/'*}'/'$f
-    elif [[ $f = '../'* ]]; then
-        while [[ $f = '../'* ]]; do
-            f=${f:3}
-            file=${file%'/'*}
+    while [[ $f = '../'* ]]; do
+        f=${f:3}
+        file=${file%'/'*}
+    done
+    f=${file%'/'*}'/'$f
+    treats=('' '/' '' '' '/' '\' '')
+    tricks=('~' ':' './' '.\' '//' '\\' '../')
+    for i in "${!treats[@]}"; do
+        treat=${treats[$i]}
+        trick=${tricks[$i]}
+        while [[ $f = *$trick* ]]; do
+            f="${f/$trick/$treat}"
         done
-        f=${file%'/'*}'/'$f
-    fi
+    done
+    while [[ $f = '/'* ]]; do
+        f=${f:1}
+    done
     if [[ $f != *'.js' ]]; then
         f+='.js'
     fi

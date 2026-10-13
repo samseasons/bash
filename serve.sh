@@ -6,17 +6,35 @@ types=('text/css' 'text/html' 'image/x-icon' 'application/javascript')
 prepare() {
     folder=$1
     line=($2)
-    file="${line[1]//'%20'/' '}"
-    if [[ "$file" != '/'* || $file = '/' ]]; then
-        file='/x.html'
+    index='/x.html'
+    if [[ $folder = *'.html' ]]; then
+        i=${folder%'/'*}
+        i=${#i}
+        if [[ $i -ne ${#folder} ]]; then
+            index=${folder:i}
+            folder=${folder::i}
+        fi
+    fi
+    if [[ ${#line[@]} -eq 1 ]]; then
+        continue
+    fi
+    file=${line[1]}
+    if [[ ${file::1} != '/' || "${file%'..'*}" != "$file" ]]; then
+        continue
+    fi
+    file="${file//'%20'/' '}"
+    found=0
+    type=${file##*'.'}
+    for i in "${!extensions[@]}"; do
+        if [[ "${extensions[$i]}" = "$type" ]]; then
+            found=1
+            type=${types[$i]}
+            break
+        fi
+    done
+    if [[ $found -eq 0 ]]; then
+        file=$index
         type='text/html'
-    else
-        extension=${file##*.}
-        for ((i=0, length=${#extensions[@]}; i < length; i++)); do
-            if [[ "$extension" = "${extensions[$i]}" ]]; then
-                type=${types[$i]}
-            fi
-        done
     fi
     echo "$folder$file"
     echo "$type"
