@@ -15,29 +15,28 @@ prepare() {
             folder=${folder::i}
         fi
     fi
-    if [[ ${#line[@]} -eq 1 ]]; then
-        continue
-    fi
-    file=${line[1]}
-    if [[ ${file::1} != '/' || "${file%'..'*}" != "$file" ]]; then
-        continue
-    fi
-    file="${file//'%20'/' '}"
-    found=0
-    type=${file##*'.'}
-    for i in "${!extensions[@]}"; do
-        if [[ "${extensions[$i]}" = "$type" ]]; then
-            found=1
-            type=${types[$i]}
-            break
+    if [[ ${#line[@]} -gt 1 ]]; then
+        file=${line[1]}
+        if [[ ${file::1} = '/' && "${file%'..'*}" = "$file" ]]; then
+            echo "$file" >&2
+            file="${file//'%20'/' '}"
+            found=0
+            type=${file##*'.'}
+            for i in "${!extensions[@]}"; do
+                if [[ "${extensions[$i]}" = "$type" ]]; then
+                    found=1
+                    type=${types[$i]}
+                    break
+                fi
+            done
+            if [[ $found -eq 0 ]]; then
+                file=$index
+                type='text/html'
+            fi
+            echo "$folder$file"
+            echo "$type"
         fi
-    done
-    if [[ $found -eq 0 ]]; then
-        file=$index
-        type='text/html'
     fi
-    echo "$folder$file"
-    echo "$type"
 }
 
 preparea() {
@@ -72,7 +71,7 @@ serve() {
     port=${2:-1234}
     if test "$(type -t socat)"; then
         echo 'localhost:'$port
-        : $(socat tcp-l:$port,fork,reuseaddr exec:"$SHELL ${BASH_SOURCE[0]} \'$folder\' $port a" 2>&1)
+        socat -lf /dev/null tcp-l:$port,fork,reuseaddr exec:"$SHELL ${BASH_SOURCE[0]} \'$folder\' $port a"
     elif test "$(type -t netcat)"; then
         echo 'localhost:'$port
         netcat -6 -k -l -w 1 $port | $SHELL ${BASH_SOURCE[0]} "$folder" $port b

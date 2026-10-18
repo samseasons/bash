@@ -19,35 +19,13 @@ resolve() {
             f="${f/$trick/$treat}"
         done
     done
-    while [[ $f = '/'* ]]; do
+    while [[ $f = '/'* || $f = '\'* ]]; do
         f=${f:1}
     done
     if [[ $f != *'.js' ]]; then
         f+='.js'
     fi
     echo "$f"
-}
-
-substitute() {
-    match=$1
-    next=$2
-    text=$3
-    a=${text%%$match*}
-    a=${#a}
-    i=${#match}
-    j=${#next}
-    while [[ $a -ne ${#text} ]]; do
-        if [[ $base64 = *${text:a+i:1}* || ($a -ne 0 && $base64"\"'." = *${text:a-1:1}*) ]]; then
-            a=$((a + i))
-        else
-            text=${text::a}$next${text:a+i}
-            a=$((a + j))
-        fi
-        b=${text:a}
-        b=${b%%$match*}
-        a=$((a + ${#b}))
-    done
-    echo "$text"
 }
 
 parse() {
@@ -344,11 +322,25 @@ parse() {
                     break
                 fi
             done
-            if [[ $found -eq 1 ]]; then
-                text=$(substitute $name '_'$path "$text")
-            else
-                text=$(substitute $name $named'_'$path "$text")
+            next='_'$path
+            if [[ $found -eq 0 ]]; then
+                next=$named$next
             fi
+            i=${text%%$name*}
+            i=${#i}
+            j=${#name}
+            k=${#next}
+            while [[ $i -ne ${#text} ]]; do
+                if [[ $base64 = *${text:i+j:1}* || ($i -ne 0 && $base64"\"'." = *${text:i-1:1}*) ]]; then
+                    i=$((i + j))
+                else
+                    text=${text::i}$next${text:i+j}
+                    i=$((i + k))
+                fi
+                b=${text:i}
+                b=${b%%$name*}
+                i=$((i + ${#b}))
+            done
         done
     done
     IFS=$'\n' read -d '' -r -a lines <<< "$text"
@@ -418,6 +410,29 @@ build() {
             fi
         done
     done
+    if [[ ${#text} -ne 0 ]]; then
+        text=${text::${#text}-1}
+    fi
+    if [[ $output = *'.html' ]]; then
+        text='<!doctype html><html><body><script>'"$text"'</script></body></html>'
+        if [[ -e "$output" ]]; then
+            t=$(<"$output")
+            i=${t%%'<script'*}
+            i=${#i}
+            j=${t%%'</script'*}
+            j=${#j}
+            k=${#t}
+            if [[ $i -eq $k || $j -eq $k ]]; then
+                i=${t%%'</body'*}
+                i=${#i}
+                if [[ $i -ne $k ]]; then
+                    text=${t::i}${text:27:${#text}-41}${t:i}
+                fi
+            else
+                text=${t::i}${text:27:${#text}-41}${t:j+9}
+            fi
+        fi
+    fi
     echo -n "$text" > "$output"
 }
 
