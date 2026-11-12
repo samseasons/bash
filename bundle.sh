@@ -10,18 +10,20 @@ resolve() {
         file=${file%'/'*}
     done
     f=${file%'/'*}'/'$f
-    treats=('' '/' '' '' '/' '\' '')
-    tricks=('~' ':' './' '.\' '//' '\\' '../')
-    for i in "${!treats[@]}"; do
-        treat=${treats[$i]}
-        trick=${tricks[$i]}
-        while [[ $f = *$trick* ]]; do
-            f="${f/$trick/$treat}"
-        done
+    i=0
+    treats=('' '/' '' '' '' '/')
+    tricks=(':' '\' '~' '..' './' '//')
+    for ((length = ${#treats[@]} - 1; i < length; i++)); do
+        f="${f//${tricks[$i]}/${treats[$i]}}"
     done
-    while [[ $f = '/'* || $f = '\'* ]]; do
+    treat=${treats[$i]}
+    trick=${tricks[$i]}
+    while [[ $f = *$trick* ]]; do
+        f="${f//$trick/$treat}"
+    done
+    if [[ $f = '/'* ]]; then
         f=${f:1}
-    done
+    fi
     if [[ $f != *'.js' ]]; then
         f+='.js'
     fi
